@@ -2,271 +2,195 @@
 
 基于STM32 F103单片机的攻角传感器系统，使用Arduino框架开发，支持MSP协议输出到INAV飞控，集成AOA舵机控制功能。
 
-## 功能特性
+# AOA For Inav9.01 传感器参数说明及调参指南()
 
-- **模拟电压采集**: 12位ADC精度，支持PA0-PA7引脚
-- **MSP协议输出**: 兼容INAV飞控的MSP协议
-- **串口调参**: 完整的命令行界面，支持参数配置和校准
-- **参数存储**: EEPROM存储配置，断电不丢失
-- **数字滤波**: 可配置的滤波算法，提高数据稳定性
-- **实时校准**: 支持零点、满量程和自动校准模式
-- **AOA舵机控制**: 支持双PWM输入角度叠加和舵机输出控制
-- **极性配置**: 可配置输入角度的叠加极性（正向/反向/不叠加）
-- **使能检测**: 支持外部PWM信号使能/禁用AOA功能
+## 通信参数
 
-## 硬件连接
+| 参数 | 值 |
+|------|-----|
+| 串口波特率 | 115200 |
+| 数据位 | 8 |
+| 停止位 | 1 |
+| 校验位 | 无 |
 
-### STM32 F103引脚分配
+## 参数配置结构体
 
-| 功能 | 引脚 | 说明 |
+位于 `include/aoa_sensor.h`：
+
+```cpp
+struct AOAConfig {
+    uint8_t adc_pin;              // ADC引脚 (PA0-PA7 对应 0-7)
+
+    float aoa_range;              // 量程（总量程，正负对半），如 360 表示 -180° ~ +180°
+    float aoa_mid;               // 中位点偏移（机械安装偏移）
+    float aoa_offset;            // 攻角偏移（软件校准偏移）
+    int8_t aoa_polarity;         // 角度极性：1=正向，-1=反向
+
+    uint8_t msp_rate;             // MSP发送频率 (Hz)
+    bool msp_enabled;             // MSP输出使能
+
+    bool debug_mode;              // 调试模式
+};
+```
+
+---
+
+## 参数详解
+
+### 硬件配置
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `adc_pin` | uint8_t | PA5 | ADC引脚号，对应 开发板 编号（PA5=5） |
+
+### 攻角范围配置
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `aoa_range` | float | 360.0 | 总量程，正负对半。例：360 = -180° ~ +180° |
+| `aoa_mid` | float | 0.0 | 中位点偏移，用于修正机械安装位置 |
+| `aoa_offset` | float | 0.0 | 攻角偏移，软件微调 |
+| `aoa_polarity` | int8_t | 1 | 角度极性：1=正向，-1=反向 |
+
+**量程示例：**
+| aoa_range | 实际范围 |
+|-----------|----------|
+| 360 | -180° ~ +180° |
+| 60 | -30° ~ +30° |
+| 90 | -45° ~ +45° |
+
+### MSP输出配置
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `msp_rate` | uint8_t | 50 | MSP发送频率 (1-100 Hz) |
+| `msp_enabled` | bool | true | MSP输出使能 |
+
+### 调试配置
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `debug_mode` | bool | false | 调试模式，开启后串口输出调试信息 |
+
+---
+
+
+## 调参指南
+
+
+### 1. 基本调参流程
+
+```bash
+# 查看当前配置
+config show
+
+# 设置攻角色程范围（根据传感器实际范围）
+config set aoa_range 360      # ±180°
+
+# 设置偏移量
+config set offset 5.0         # +5° 如果有必要
+
+
+# 保存配置
+save
+
+```
+
+### 2. 校准流程
+
+#### 中位点校准
+将传感器放置在中间位置，执行：
+```bash
+calibrate aoa_mid
+save
+config show
+
+```
+
+### 3. 极性调整
+
+如果攻角方向相反，请执行以下命令：
+```bash
+config set aoa_polarity -1
+save
+```
+
+### 4. MSP频率调整
+
+根据飞控需求调整：
+```bash
+config set msp_rate 20    # 20Hz
+config set msp_rate 50    # 50Hz
+config set msp_rate 100   # 100Hz
+save
+```
+
+### 5. 调试模式
+
+开启后可在串口查看实时数据：
+```bash
+debug on     # 开启调试输出
+debug off    # 关闭
+```
+
+---
+
+## 命令速查表
+
+### 基本命令
+| 命令 | 说明 | 示例 |
 |------|------|------|
-| 攻角传感器输入 | PA0-PA7 | 模拟电压输入 (默认PA0) |
-| MSP输出 | PA9(TX2) | 连接INAV飞控RX |
-| MSP输入 | PA10(RX2) | 连接INAV飞控TX |
-| 调参串口 | PA9(TX1)/PA10(RX1) | USB转串口连接电脑 |
-| LED指示 | PC13 | 系统状态指示 |
-| AOA使能检测 | PA1 | PWM使能信号输入 (默认) |
-| PWM输入1 | PA2 | 舵机控制PWM输入1 (默认) |
-| PWM输入2 | PA3 | 舵机控制PWM输入2 (默认) |
-| 舵机输出 | PA6 | 舵机控制信号输出 (默认) |
+| `help` | 显示帮助 | `help` |
+| `status` | 系统状态 | `status` |
+| `config show` | 显示配置 | `config show` |
+| `save` | 保存配置 | `save` |
+| `load` | 加载配置 | `load` |
+| `reset` | 重置默认 | `reset` |
+| `version` | 版本信息 | `version` |
 
-### 传感器连接
+### 校准命令
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `calibrate aoa_mid` | 中位点校准 | `calibrate aoa_mid` |
 
-攻角传感器输出电压范围：0-3.3V
-推荐使用电位器或专用攻角传感器模块
+### 配置命令
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `config set aoa_range <v>` | 设置量程 | `config set aoa_range 60` |
+| `config set offset <v>` | 设置偏移 | `config set offset 5.0` |
+| `config set msp_rate <v>` | MSP频率 | `config set msp_rate 50` |
+| `config set aoa_polarity <v>` | 极性 | `config set aoa_polarity 1` |
+| `config set debug_mode <on/off>` | 调试模式 | `config set debug_mode on` |
+| `config get aoa_range` | 获取量程 | `config get aoa_range` |
+| `config get offset` | 获取偏移 | `config get offset` |
 
-## 软件配置
+### 调试命令
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `debug` | 查看状态 | `debug` |
+| `debug on` | 开启调试 | `debug on` |
+| `debug off` | 关闭调试 | `debug off` |
+| `test 1` | 运行测试 | `test 1` |
 
-### 默认参数
+---
 
-- ADC引脚: PA0
-- 攻角范围: -10° ~ +30°
-- 滤波采样数: 5
-- 滤波系数: 0.2
-- MSP发送频率: 10Hz
-- ADC分辨率: 12位 (0-4095)
+## 滤波参数（固定）
 
-### 串口命令
+滤波参数已固定为宏定义，无需调整：
 
-连接USB串口 (115200波特率) 后可使用以下命令：
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `FILTER_SAMPLES` | 10 | 滤波采样数量 |
+| `FILTER_ALPHA` | 0.3 | 滤波系数 (0-1) |
 
-#### 基础命令
-```
-help                    # 显示帮助信息
-status                  # 显示系统状态
-version                 # 显示版本信息
-test                    # 测试传感器
-```
-
-#### 配置命令
-```
-config                  # 显示当前配置
-config show             # 显示当前配置
-config set <参数> <值>  # 设置参数
-config get <参数>       # 获取参数
-```
-
-可配置参数：
-- `adc_pin`: ADC引脚 (0-7)
-- `aoa_min`: 最小攻角 (度)
-- `aoa_max`: 最大攻角 (度)
-- `offset`: 攻角偏移 (度)
-- `msp_rate`: MSP发送频率 (Hz)
-
-#### 校准命令
-```
-calibrate zero          # 零点校准
-calibrate full          # 满量程校准
-calibrate auto          # 自动校准模式
-```
-
-#### AOA舵机控制命令
-```
-aoa_servo               # 显示AOA舵机控制配置
-aoa_servo show         # 显示AOA舵机控制配置
-aoa_servo set <参数> <值>  # 设置AOA舵机参数
-aoa_servo get <参数>  # 获取AOA舵机参数
-aoa_servo reset       # 重置AOA舵机配置
-aoa_servo test        # 测试AOA舵机控制
-```
-
-AOA舵机可配置参数：
-- `enable`: AOA功能使能 (true/false)
-- `enable_pin`: AOA使能引脚 (0-15)
-- `input_pins`: PWM输入引脚 (pin1 pin2)
-- `pwm_range`: PWM范围 (min max center)
-- `servo_output`: 舵机输出配置 (pin min_angle max_angle)
-- `polarity`: 输入极性 (input1_pol input2_pol)
-
-#### 存储命令
-```
-save                    # 保存配置到EEPROM
-load                    # 从EEPROM加载配置
-reset                   # 重置为默认配置
-```
-
-### 使用示例
-
-1. **查看系统状态**
-```
-AOA> status
-=== 系统状态 ===
-运行时间: 120秒
-当前ADC: 2048
-当前电压: 1.650V
-当前攻角: 10.00°
-```
-
-2. **设置攻角范围**
-```
-AOA> config set aoa_min -15
-AOA> config set aoa_max 45
-最小攻角设置为: -15.00
-最大攻角设置为: 45.00
-```
-
-3. **校准传感器**
-```
-AOA> calibrate zero
-正在进行零点校准...
-零点校准完成，ADC值: 512
-```
-
-4. **保存配置**
-```
-AOA> save
-配置已保存到EEPROM
-```
-
-## MSP协议
-
-### 自定义MSP命令
-
-| 命令ID | 功能 | 数据格式 |
-|--------|------|----------|
-| 200 | 攻角传感器数据 | float(攻角) + uint16(ADC) + float(电压) + uint8(质量) |
-| 201 | 攻角传感器配置 | 配置参数包 |
-| 202 | 攻角传感器校准 | uint8(校准类型) |
-| 203 | AOA舵机控制配置 | AOA舵机配置参数包 |
-| 204 | AOA舵机控制状态 | 使能状态 + PWM输入 + 角度数据 + 叠加结果 |
-
-### 校准类型
-
-- 0: 零点校准
-- 1: 满量程校准
-- 2: 自动校准
-- 3: 保存校准
-
-## 编译和上传
-
-### 环境要求
-
-- PlatformIO
-- STM32开发板支持
-- ST-Link调试器 (可选)
-
-### 编译命令
-
-```bash
-pio run
-```
-
-### 上传命令
-
-```bash
-pio run --target upload
-```
-
-### 串口监视
-
-```bash
-pio device monitor
-```
-
-## INAV配置
-
-### 接收器设置
-
-1. 在INAV中配置串口为MSP协议
-2. 设置波特率为115200
-3. 启用自定义传感器支持
-
-### 传感器配置
-
-攻角数据将通过MSP协议发送到INAV，可用于：
-- 飞行姿态控制
-- 失速警告
-- 飞行数据记录
+---
 
 ## 故障排除
 
-### 常见问题
-
-1. **串口无响应**
-   - 检查波特率设置 (115200)
-   - 确认USB连接正常
-
-2. **MSP数据无输出**
-   - 检查PA9/PA10连接
-   - 确认INAV串口配置
-
-3. **ADC读数异常**
-   - 检查传感器连接
-   - 确认电压范围 (0-3.3V)
-   - 进行校准
-
-4. **配置丢失**
-   - 检查EEPROM是否正常
-   - 重新保存配置
-
-### 调试模式
-
-使用ST-Link连接可进行硬件调试：
-```bash
-pio run --target debug
-```
-
-## 技术规格
-
-- **MCU**: STM32 F103C8T6
-- **ADC精度**: 12位 (0-4095)
-- **电压范围**: 0-3.3V
-- **采样频率**: 可配置 (1-100Hz)
-- **存储容量**: 4KB EEPROM
-- **通信接口**: UART (115200bps)
-- **工作电压**: 3.3V
-- **工作温度**: -40°C ~ +85°C
-
-## 开发信息
-
-- **框架**: Arduino for STM32
-- **开发环境**: PlatformIO
-- **编程语言**: C/C++
-- **版本**: v2.0
-- **许可证**: MIT
-
-## 更新日志
-
-### v2.0 (2024-11-08)
-- 新增AOA舵机控制功能
-- 支持双PWM输入角度叠加
-- 可配置输入极性（正向/反向/不叠加）
-- 外部使能信号检测
-- 舵机行程限制保护
-- 扩展MSP协议支持新参数
-- 完善串口命令系统
-
-### v1.0 (2024-11-05)
-- 初始版本发布
-- 基础ADC采集功能
-- MSP协议支持
-- 串口调参界面
-- EEPROM参数存储
-- 数字滤波算法
-
-## 联系方式
-
-如有问题或建议，请通过以下方式联系：
-- 项目地址: [GitHub Repository]
-- 技术支持: [Email]
-- 文档更新: [Wiki]
+| 问题 | 解决方法 |
+|------|----------|
+| 攻角方向相反 | `config set aoa_polarity -1` |
+| 攻角范围不符 | 调整 `aoa_range` 或重新校准 |
+| 数据跳动大 | 硬件问题，滤波参数已优化 |
+| MSP无输出 | 检查 `msp_rate` 和 `msp_enabled` |
+| 校准后不准 | 重新执行零点/满量程校准 |
